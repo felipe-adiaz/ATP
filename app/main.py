@@ -3,7 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import pdf, trilha, perfil
+from app.routers import pdf, trilha, perfil, drive
 
 app = FastAPI(title="StudyFlow Backend", version="0.1.0")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 app.include_router(pdf.router, prefix="/pdf", tags=["PDF"])
 app.include_router(trilha.router, prefix="/trilha", tags=["Trilha"])
 app.include_router(perfil.router, prefix="/perfil", tags=["Perfil"])
+app.include_router(drive.router, prefix="/drive", tags=["Drive"])
 
 
 @app.get("/")
