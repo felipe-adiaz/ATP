@@ -5,3 +5,7 @@ python-multipart
 PyMuPDF
  
 python-dotenv
+supabase
+google-auth
+google-auth-oauthlib
+google-api-python-client
