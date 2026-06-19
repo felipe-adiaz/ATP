@@ -14,7 +14,9 @@ def _build_flow() -> Flow:
             "redirect_uris": [os.environ["GOOGLE_REDIRECT_URI"]],
         }
     }
-    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    flow = Flow.from_client_config(
+        client_config, scopes=SCOPES, autogenerate_code_verifier=False
+    )
     flow.redirect_uri = os.environ["GOOGLE_REDIRECT_URI"]
     return flow
 
