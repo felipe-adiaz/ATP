@@ -14,6 +14,62 @@ PADROES_SECAO_QUESTOES = [
     r"^EXERC",
 ]
 
+# Padrões de marca d'água a remover do texto extraído. Genéricos: não dependem
+# de um aluno específico, funcionam para qualquer nome/CPF que apareça no
+# mesmo formato adotado pela plataforma de origem do PDF (ex: Estratégia
+# Concursos costuma marcar cada página com "CPF - Nome Completo").
+PADROES_MARCA_DAGUA = [
+    r"\d{11}\s*-\s*[A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú ]*",  # ex: "01000099130 - Luis Felipe Alves Diaz" (não cruza quebra de linha)
+    r"www\.estrategiaconcursos\.com\.br",
+]
+
+
+def limpar_marca_dagua(texto: str) -> str:
+    """
+    Remove marcas d'água de identificação pessoal (CPF + nome) e do domínio
+    da plataforma de origem, que aparecem repetidas em cada página do PDF.
+    Funciona para qualquer aluno, pois o CPF/nome não são fixos no código,
+    apenas o formato do padrão é reconhecido.
+    """
+    for padrao in PADROES_MARCA_DAGUA:
+        texto = re.sub(padrao, "", texto)
+    texto = re.sub(r'\n{3,}', '\n\n', texto)
+    texto = re.sub(r'[ \t]{2,}', ' ', texto)
+    return texto.strip()
+
+
+def detectar_linhas_repetidas(textos_por_pagina: list, limiar: float = 0.6, tamanho_minimo: int = 5) -> set:
+    """
+    Detecta linhas (ex: nome do professor, título da aula) que se repetem
+    como cabeçalho/rodapé em uma fração alta das páginas. Genérico: não
+    depende de um título ou autor fixo, funciona para qualquer PDF/aula,
+    pois descobre o que se repete observando o próprio documento.
+
+    `tamanho_minimo` evita remover linhas curtas (ex: "Art. 25.") que
+    poderiam coincidir entre páginas sem serem cabeçalho/rodapé de verdade.
+    """
+    from collections import Counter
+
+    contagem = Counter()
+    for texto in textos_por_pagina:
+        linhas_unicas_da_pagina = {
+            l.strip() for l in texto.split("\n")
+            if len(l.strip()) >= tamanho_minimo
+        }
+        for linha in linhas_unicas_da_pagina:
+            contagem[linha] += 1
+
+    total_paginas = len(textos_por_pagina) or 1
+    return {linha for linha, qtd in contagem.items() if qtd / total_paginas >= limiar}
+
+
+def remover_linhas_repetidas(texto: str, linhas_repetidas: set) -> str:
+    """Remove do texto de uma página as linhas identificadas como cabeçalho/rodapé repetido."""
+    linhas_filtradas = [l for l in texto.split("\n") if l.strip() not in linhas_repetidas]
+    resultado = "\n".join(linhas_filtradas)
+    resultado = re.sub(r'\n{3,}', '\n\n', resultado)
+    return resultado.strip()
+
 
 def eh_secao_questoes(texto_pagina: str) -> bool:
     """
@@ -107,8 +163,8 @@ def extrair_pagina(page, highlight_rects):
 
     flush_buffer()
     texto_final = "".join(resultado)
-    texto_final = re.sub(r'\n{3,}', '\n\n', texto_final)
-    return texto_final.strip()
+    texto_final = limpar_marca_dagua(texto_final)
+    return texto_final
 
 
 def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
@@ -121,6 +177,10 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
     LISTA DE QUESTÕES, GABARITO) e as exclui do cálculo de domínio,
     mesmo que o PDF alterne entre conteúdo e questões várias vezes.
     Ignora as primeiras 6 páginas na detecção (índice/capa).
+
+    Marca d'água de identificação pessoal (CPF + nome do aluno) e do
+    domínio da plataforma de origem são removidas automaticamente,
+    funcionando para qualquer aluno (não há nome/CPF fixo no código).
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -170,6 +230,15 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
             total_destacadas_conteudo += destacadas_pagina
             if texto_md.strip():
                 paginas_conteudo.append(entrada)
+
+    # Remove cabeçalho/rodapé repetido (ex: nome do professor, título da
+    # aula) que aparece em quase toda página. Só é possível detectar isso
+    # agora que todas as páginas já foram extraídas e podem ser comparadas
+    # entre si. Não afeta as contagens de palavras/destacadas (calculadas
+    # à parte, direto do PDF), só o texto exibido no markdown.
+    linhas_repetidas = detectar_linhas_repetidas([p["texto"] for p in paginas_conteudo])
+    for p in paginas_conteudo:
+        p["texto"] = remover_linhas_repetidas(p["texto"], linhas_repetidas)
 
     # Nível de domínio calculado SOMENTE sobre páginas de conteúdo
     nivel_dominio = round(
