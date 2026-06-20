@@ -1,13 +1,10 @@
 from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi.responses import RedirectResponse
 from datetime import datetime, timezone
-
 from app.services.drive_auth_service import gerar_url_autorizacao, trocar_code_por_tokens
 from app.services.supabase_client_service import get_supabase_client_for_user, extrair_user_id
-
+from app.services.drive_service import listar_pdfs_da_pasta_studyflow
 router = APIRouter()
-
-
 @router.get("/auth")
 async def iniciar_autorizacao(authorization: str = Header(...)):
     """
@@ -18,11 +15,8 @@ async def iniciar_autorizacao(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente ou mal formatado.")
     user_jwt = authorization.replace("Bearer ", "", 1)
-
     url = gerar_url_autorizacao(state=user_jwt)
     return {"auth_url": url}
-
-
 @router.get("/callback")
 async def callback_google(code: str = Query(...), state: str = Query(...)):
     """
@@ -35,19 +29,16 @@ async def callback_google(code: str = Query(...), state: str = Query(...)):
         tokens = trocar_code_por_tokens(code)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro ao trocar código por tokens: {str(e)}")
-
     if not tokens["refresh_token"]:
         raise HTTPException(
             status_code=400,
             detail="Google não retornou refresh_token. Revogue o acesso em myaccount.google.com/permissions e tente novamente.",
         )
-
     client = get_supabase_client_for_user(user_jwt)
     try:
         user_id = extrair_user_id(user_jwt, client)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
-
     client.table("drive_connections").upsert({
         "user_id": user_id,
         "access_token": tokens["access_token"],
@@ -55,6 +46,39 @@ async def callback_google(code: str = Query(...), state: str = Query(...)):
         "token_expiry": tokens["expiry"],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }, on_conflict="user_id").execute()
-
     # Ajuste esta URL para a tela real do frontend que deve abrir após conectar
     return RedirectResponse(url="https://preview--auditprep.lovable.app/app/files?drive=conectado")
+@router.get("/listar-pasta")
+async def listar_pasta(authorization: str = Header(...)):
+    """
+    Lista todos os PDFs encontrados na pasta StudyFlow (e subpastas) do
+    Google Drive do usuário logado. Não baixa conteúdo, só metadados.
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token ausente ou mal formatado.")
+    user_jwt = authorization.replace("Bearer ", "", 1)
+
+    client = get_supabase_client_for_user(user_jwt)
+    try:
+        user_id = extrair_user_id(user_jwt, client)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    resultado_conexao = client.table("drive_connections").select("access_token").eq("user_id", user_id).execute()
+    if not resultado_conexao.data:
+        raise HTTPException(status_code=404, detail="Usuário ainda não conectou o Google Drive.")
+
+    access_token = resultado_conexao.data[0]["access_token"]
+
+    try:
+        resultado = listar_pdfs_da_pasta_studyflow(access_token)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Erro ao listar arquivos no Drive: {str(e)}")
+
+    if not resultado["encontrou_pasta_raiz"]:
+        raise HTTPException(
+            status_code=404,
+            detail="Pasta 'StudyFlow' não encontrada na raiz do Google Drive do usuário.",
+        )
+
+    return resultado
