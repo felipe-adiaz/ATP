@@ -13,7 +13,7 @@ REGRAS:
 1. Extraia APENAS questões que estejam dentro da seção "Questões Comentadas".
 2. Ignore completamente qualquer seção "Lista de Questões" (são as mesmas questões, repetidas, sem comentário).
 3. Ignore questões soltas que apareçam misturadas no meio do conteúdo teórico, fora da seção "Questões Comentadas".
-4. Cada questão começa com um número seguido de ponto (ex: "01.", "1.") e geralmente traz a origem entre parênteses logo em seguida, em formatos como (BANCA/ÓRGÃO/ANO), (BANCA – ÓRGÃO – ANO), (BANCA/ÓRGÃO/ANO/Adaptada) ou similar — a ordem entre banca e órgão pode variar. Esse parêntese pode estar ausente; nesse caso deixe banca, orgao e ano como null.
+4. Cada questão começa com um número seguido de ponto (ex: "01.", "1.") e geralmente traz a origem entre parênteses logo em seguida, em formatos como (BANCA/ÓRGÃO/ANO), (BANCA – ÓRGÃO – ANO), (BANCA/ÓRGÃO/ANO/Adaptada) ou similar. Esse parêntese pode estar ausente; nesse caso deixe banca, orgao e ano como null.
 5. A seção pode estar dividida em subseções por banca (ex: "CEBRASPE/CESPE", "Outras Bancas"). Nesses casos a numeração pode reiniciar a cada subseção — ignore isso e numere as questões sequencialmente ao longo de TODA a seção, na ordem em que aparecem no texto.
 6. As alternativas podem vir em formatos diferentes: "a)", "A)" ou "(A)". Trate todos da mesma forma, sempre mapeando para os campos alternativa_a a alternativa_e.
 7. O texto pode conter marcações de destaque do tipo ==texto== — trate como texto normal, ignore os símbolos ==.
@@ -52,7 +52,9 @@ def calcular_hash(texto: str) -> str:
 def localizar_secao_questoes(markdown: str) -> str | None:
     """
     Localiza o trecho da seção 'Questões Comentadas' dentro do markdown completo.
-    Corta no início da próxima seção de nível equivalente, o que vier primeiro.
+    Busca direto no corpo do texto (não depende de sumário, que nem sempre é confiável).
+    Corta no início da próxima seção de nível equivalente (ex: 'Gabarito' isolado,
+    ou fim do documento), o que vier primeiro.
     """
     padrao_inicio = re.compile(r"quest[õo]es\s+comentadas", re.IGNORECASE)
     match_inicio = padrao_inicio.search(markdown)
@@ -72,24 +74,46 @@ def localizar_secao_questoes(markdown: str) -> str | None:
 
 
 def contar_questoes_esperadas(trecho: str) -> int:
-    """Conta padrão 'número + ponto + parêntese' como checagem independente da IA."""
+    """
+    Conta ocorrências do padrão 'número + ponto + parêntese de origem' para
+    ter uma estimativa independente da IA de quantas questões existem no trecho.
+    """
     padrao = re.compile(r"\b\d{1,3}\.\s*\(")
     return len(padrao.findall(trecho))
 
 
-def extrair_questoes_via_ia(trecho: str) -> list[dict]:
-    """Chama a IA para extrair as questões estruturadas do trecho isolado."""
+def extrair_questoes_via_ia(trecho: str) -> dict:
+    """
+    Chama a IA para extrair as questões estruturadas do trecho isolado.
+    Retorna a lista de questões parseadas, o texto bruto da resposta e o
+    motivo do término — para diagnóstico de truncamento.
+    """
     resposta = client.chat.completions.create(
         model="gpt-4o-mini",
         response_format={"type": "json_object"},
+        max_tokens=16000,
         messages=[
             {"role": "system", "content": PROMPT_SISTEMA},
             {"role": "user", "content": trecho},
         ],
     )
     conteudo = resposta.choices[0].message.content
-    dados = json.loads(conteudo)
-    return dados.get("questoes", [])
+    motivo_termino = resposta.choices[0].finish_reason
+
+    try:
+        dados = json.loads(conteudo)
+        questoes = dados.get("questoes", [])
+        erro_parsing = None
+    except json.JSONDecodeError as e:
+        questoes = []
+        erro_parsing = str(e)
+
+    return {
+        "questoes": questoes,
+        "resposta_bruta": conteudo,
+        "motivo_termino": motivo_termino,
+        "erro_parsing": erro_parsing,
+    }
 
 
 def processar_extracao(markdown: str) -> dict:
@@ -107,14 +131,24 @@ def processar_extracao(markdown: str) -> dict:
             "total_questoes": 0,
             "total_esperado": 0,
             "texto_origem": None,
+            "resposta_bruta_ia": None,
+            "motivo_termino": None,
             "questoes": [],
         }
 
     total_esperado = contar_questoes_esperadas(trecho)
-    questoes = extrair_questoes_via_ia(trecho)
+    resultado_ia = extrair_questoes_via_ia(trecho)
+    questoes = resultado_ia["questoes"]
     total_extraido = len(questoes)
 
-    status = "ok" if total_extraido == total_esperado else "revisar"
+    if resultado_ia["erro_parsing"]:
+        status = "erro_parsing"
+    elif resultado_ia["motivo_termino"] != "stop":
+        status = "truncado"
+    elif total_extraido == total_esperado:
+        status = "ok"
+    else:
+        status = "revisar"
 
     return {
         "conteudo_hash": hash_conteudo,
@@ -122,5 +156,7 @@ def processar_extracao(markdown: str) -> dict:
         "total_questoes": total_extraido,
         "total_esperado": total_esperado,
         "texto_origem": trecho,
+        "resposta_bruta_ia": resultado_ia["resposta_bruta"],
+        "motivo_termino": resultado_ia["motivo_termino"],
         "questoes": questoes,
     }
