@@ -4,16 +4,43 @@ Usa o access_token salvo em drive_connections (via drive_auth_service).
 Não baixa conteúdo de arquivo nenhum aqui — só lista metadados.
 """
 
+import os
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
 NOME_PASTA_RAIZ = "StudyFlow"
 
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-def _montar_client_drive(access_token: str):
-    """Cria o client autenticado da Drive API a partir do access_token salvo."""
-    credenciais = Credentials(token=access_token)
-    return build("drive", "v3", credentials=credenciais)
+
+def _montar_credenciais(access_token: str, refresh_token: str) -> Credentials:
+    """
+    Monta as credenciais completas, com tudo que a lib do Google precisa
+    para renovar o access_token sozinha caso ele já tenha expirado.
+    """
+    return Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        token_uri=GOOGLE_TOKEN_URI,
+        client_id=os.environ["GOOGLE_CLIENT_ID"],
+        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+    )
+
+
+def _montar_client_drive(access_token: str, refresh_token: str):
+    """
+    Cria o client autenticado da Drive API. Se o access_token estiver
+    expirado, renova automaticamente usando o refresh_token antes de
+    montar o client.
+    """
+    credenciais = _montar_credenciais(access_token, refresh_token)
+
+    if credenciais.expired or not credenciais.valid:
+        credenciais.refresh(GoogleAuthRequest())
+
+    client = build("drive", "v3", credentials=credenciais)
+    return client, credenciais.token
 
 
 def _buscar_id_pasta_raiz(client_drive):
@@ -69,7 +96,7 @@ def _percorrer_recursivo(client_drive, pasta_id: str, caminho_atual: str, nome_s
                 client_drive,
                 item["id"],
                 caminho_item,
-                item["name"],
+                item["name"],  # essa pasta passa a ser a "subpasta imediata" para os filhos dela
                 lista_pdfs,
             )
         elif item["mimeType"] == "application/pdf":
@@ -82,12 +109,16 @@ def _percorrer_recursivo(client_drive, pasta_id: str, caminho_atual: str, nome_s
             })
 
 
-def listar_pdfs_da_pasta_studyflow(access_token: str) -> dict:
+def listar_pdfs_da_pasta_studyflow(access_token: str, refresh_token: str) -> dict:
     """
     Função principal do service. Localiza a pasta StudyFlow na raiz do Drive
     do usuário e retorna todos os PDFs encontrados nela (recursivo).
+
+    Se o access_token estiver expirado, é renovado automaticamente; o token
+    (possivelmente novo) volta no campo "access_token_atualizado", para que
+    quem chamou possa salvar de volta no banco.
     """
-    client_drive = _montar_client_drive(access_token)
+    client_drive, access_token_atualizado = _montar_client_drive(access_token, refresh_token)
 
     pasta_raiz_id = _buscar_id_pasta_raiz(client_drive)
     if pasta_raiz_id is None:
@@ -95,6 +126,7 @@ def listar_pdfs_da_pasta_studyflow(access_token: str) -> dict:
             "encontrou_pasta_raiz": False,
             "total_pdfs": 0,
             "pdfs": [],
+            "access_token_atualizado": access_token_atualizado,
         }
 
     lista_pdfs = []
@@ -110,4 +142,5 @@ def listar_pdfs_da_pasta_studyflow(access_token: str) -> dict:
         "encontrou_pasta_raiz": True,
         "total_pdfs": len(lista_pdfs),
         "pdfs": lista_pdfs,
+        "access_token_atualizado": access_token_atualizado,
     }
