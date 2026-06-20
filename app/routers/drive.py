@@ -64,16 +64,26 @@ async def listar_pasta(authorization: str = Header(...)):
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    resultado_conexao = client.table("drive_connections").select("access_token").eq("user_id", user_id).execute()
+    resultado_conexao = client.table("drive_connections").select("access_token, refresh_token").eq("user_id", user_id).execute()
     if not resultado_conexao.data:
         raise HTTPException(status_code=404, detail="Usuário ainda não conectou o Google Drive.")
 
     access_token = resultado_conexao.data[0]["access_token"]
+    refresh_token = resultado_conexao.data[0]["refresh_token"]
 
     try:
-        resultado = listar_pdfs_da_pasta_studyflow(access_token)
+        resultado = listar_pdfs_da_pasta_studyflow(access_token, refresh_token)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Erro ao listar arquivos no Drive: {str(e)}")
+
+    # Se o token foi renovado durante a chamada, salva o novo no banco
+    # para não precisar renovar de novo na próxima vez.
+    novo_access_token = resultado.pop("access_token_atualizado", None)
+    if novo_access_token and novo_access_token != access_token:
+        client.table("drive_connections").update({
+            "access_token": novo_access_token,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("user_id", user_id).execute()
 
     if not resultado["encontrou_pasta_raiz"]:
         raise HTTPException(
