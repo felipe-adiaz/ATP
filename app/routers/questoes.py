@@ -55,6 +55,7 @@ async def extrair_questoes(pdf_processado_id: str, authorization: str = Header(.
             "total_questoes": resultado["total_questoes"],
             "total_esperado": resultado["total_esperado"],
             "texto_origem": resultado["texto_origem"],
+            "resposta_bruta_ia": resultado["resposta_bruta_ia"],
         }).execute()
         extracao_id = nova_extracao.data[0]["id"]
         reaproveitado = False
