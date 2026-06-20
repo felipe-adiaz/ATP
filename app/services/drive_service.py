@@ -109,6 +109,29 @@ def _percorrer_recursivo(client_drive, pasta_id: str, caminho_atual: str, nome_s
             })
 
 
+import io
+from googleapiclient.http import MediaIoBaseDownload
+
+
+def baixar_pdf(access_token: str, refresh_token: str, drive_file_id: str) -> bytes:
+    """
+    Baixa o conteúdo binário (bytes) de um arquivo do Drive pelo seu ID.
+    Renova o access_token automaticamente se necessário, igual à listagem.
+    """
+    client_drive, _ = _montar_client_drive(access_token, refresh_token)
+
+    request = client_drive.files().get_media(fileId=drive_file_id)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+
+    concluido = False
+    while not concluido:
+        _, concluido = downloader.next_chunk()
+
+    buffer.seek(0)
+    return buffer.read()
+
+
 def listar_pdfs_da_pasta_studyflow(access_token: str, refresh_token: str) -> dict:
     """
     Função principal do service. Localiza a pasta StudyFlow na raiz do Drive
