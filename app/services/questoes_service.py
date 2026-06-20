@@ -14,13 +14,15 @@ REGRAS:
 2. Ignore completamente qualquer seção "Lista de Questões" (são as mesmas questões, repetidas, sem comentário).
 3. Ignore questões soltas que apareçam misturadas no meio do conteúdo teórico, fora da seção "Questões Comentadas".
 4. Cada questão começa com um número seguido de ponto (ex: "01.", "1.") e geralmente traz a origem entre parênteses logo em seguida, em formatos como (BANCA/ÓRGÃO/ANO), (BANCA – ÓRGÃO – ANO), (BANCA/ÓRGÃO/ANO/Adaptada) ou similar. Esse parêntese pode estar ausente; nesse caso deixe banca, orgao e ano como null.
-5. A seção pode estar dividida em subseções por banca (ex: "CEBRASPE/CESPE", "Outras Bancas"). Nesses casos a numeração pode reiniciar a cada subseção — ignore isso e numere as questões sequencialmente ao longo de TODA a seção, na ordem em que aparecem no texto.
+5. A seção pode estar dividida em subseções por banca (ex: "CEBRASPE/CESPE", "Outras Bancas"). Nesses casos a numeração pode reiniciar a cada subseção — ignore isso e numere as questões sequencialmente ao longo de TODO o texto recebido, na ordem em que aparecem.
 6. As alternativas podem vir em formatos diferentes: "a)", "A)" ou "(A)". Trate todos da mesma forma, sempre mapeando para os campos alternativa_a a alternativa_e.
 7. O texto pode conter marcações de destaque do tipo ==texto== — trate como texto normal, ignore os símbolos ==.
 8. O texto pode conter quebras de página no meio de uma questão, no formato "--- ## Página N" — ignore essas quebras, a questão continua.
-9. O comentário é o texto explicativo que vem após "Comentários:" (ou "Comentários", sem dois-pontos) e antes da próxima questão ou do fim da seção.
-10. O gabarito normalmente aparece como "Gabarito: Letra X" ou similar. Extraia apenas a letra. Se o gabarito não estiver explícito em nenhum lugar do texto da questão, deixe como null — NUNCA infira ou adivinhe o gabarito a partir do comentário.
-11. Se a seção "Questões Comentadas" não existir no texto recebido, retorne uma lista vazia.
+9. O comentário é o texto explicativo que vem após "Comentários:" (ou "Comentários", sem dois-pontos) e antes da próxima questão ou do fim do texto.
+10. O gabarito normalmente aparece como "Gabarito: Letra X" ou similar. Extraia apenas a letra. Se o gabarito não estiver explícito em nenhum lugar do texto da questão, use o valor JSON null (sem aspas) — NUNCA escreva a palavra "null" como texto entre aspas, e NUNCA infira ou adivinhe o gabarito a partir do comentário.
+11. Se nenhuma questão estiver presente no texto recebido, retorne uma lista vazia.
+12. Para QUALQUER campo que não tiver valor (banca, orgao, ano, qualquer alternativa, gabarito, comentario), use sempre o valor JSON null (sem aspas), nunca a string "null" nem texto vazio "".
+13. Extraia o comentário completo, sem resumir ou abreviar, mesmo que seja longo. Não pule questões para economizar espaço — extraia TODAS as questões presentes no texto recebido, do início ao fim, mesmo que sejam várias.
 
 Responda APENAS com um JSON válido, sem texto antes ou depois, sem marcação de código, no formato:
 
@@ -77,14 +79,39 @@ def contar_questoes_esperadas(trecho: str) -> int:
     """
     Conta ocorrências do padrão 'número + ponto + parêntese de origem' para
     ter uma estimativa independente da IA de quantas questões existem no trecho.
+    Não extrai conteúdo, só conta — serve como checagem de integridade.
     """
     padrao = re.compile(r"\b\d{1,3}\.\s*\(")
     return len(padrao.findall(trecho))
 
 
+def dividir_em_lotes(trecho: str, questoes_por_lote: int = 6) -> list[str]:
+    """
+    Divide o trecho da seção de questões em lotes menores, cortando nos
+    pontos onde uma nova questão começa (padrão 'número + ponto + parêntese').
+    Isso evita que o modelo perca qualidade/aderência ao processar um trecho
+    muito longo de uma vez (problema observado: trecho grande -> IA pula
+    questões silenciosamente mesmo sem truncar tecnicamente).
+    """
+    padrao = re.compile(r"\b\d{1,3}\.\s*\(")
+    posicoes_inicio = [m.start() for m in padrao.finditer(trecho)]
+
+    if not posicoes_inicio:
+        return [trecho]
+
+    lotes = []
+    for i in range(0, len(posicoes_inicio), questoes_por_lote):
+        inicio_lote = posicoes_inicio[i]
+        indice_fim = i + questoes_por_lote
+        fim_lote = posicoes_inicio[indice_fim] if indice_fim < len(posicoes_inicio) else len(trecho)
+        lotes.append(trecho[inicio_lote:fim_lote])
+
+    return lotes
+
+
 def extrair_questoes_via_ia(trecho: str) -> dict:
     """
-    Chama a IA para extrair as questões estruturadas do trecho isolado.
+    Chama a IA para extrair as questões estruturadas de um lote (trecho menor).
     Retorna a lista de questões parseadas, o texto bruto da resposta e o
     motivo do término — para diagnóstico de truncamento.
     """
@@ -120,6 +147,10 @@ def processar_extracao(markdown: str) -> dict:
     """
     Função principal: recebe o markdown de uma aula já salvo em pdf_processados,
     retorna o resultado pronto para persistir em extracoes_questoes + questoes_banco.
+
+    Processa a seção de questões em lotes menores (em vez de mandar tudo de
+    uma vez), porque trechos muito longos fazem o modelo perder aderência à
+    instrução e pular questões silenciosamente, mesmo sem truncar tecnicamente.
     """
     hash_conteudo = calcular_hash(markdown)
 
@@ -137,13 +168,30 @@ def processar_extracao(markdown: str) -> dict:
         }
 
     total_esperado = contar_questoes_esperadas(trecho)
-    resultado_ia = extrair_questoes_via_ia(trecho)
-    questoes = resultado_ia["questoes"]
-    total_extraido = len(questoes)
+    lotes = dividir_em_lotes(trecho, questoes_por_lote=6)
 
-    if resultado_ia["erro_parsing"]:
+    todas_questoes = []
+    todas_respostas_brutas = []
+    motivos_termino = []
+    houve_erro_parsing = False
+
+    for lote in lotes:
+        resultado_ia = extrair_questoes_via_ia(lote)
+        todas_questoes.extend(resultado_ia["questoes"])
+        todas_respostas_brutas.append(resultado_ia["resposta_bruta"])
+        motivos_termino.append(resultado_ia["motivo_termino"])
+        if resultado_ia["erro_parsing"]:
+            houve_erro_parsing = True
+
+    # Renumera sequencialmente, já que cada lote conta do zero internamente.
+    for indice, questao in enumerate(todas_questoes, start=1):
+        questao["numero_questao"] = indice
+
+    total_extraido = len(todas_questoes)
+
+    if houve_erro_parsing:
         status = "erro_parsing"
-    elif resultado_ia["motivo_termino"] != "stop":
+    elif any(motivo != "stop" for motivo in motivos_termino):
         status = "truncado"
     elif total_extraido == total_esperado:
         status = "ok"
@@ -156,7 +204,7 @@ def processar_extracao(markdown: str) -> dict:
         "total_questoes": total_extraido,
         "total_esperado": total_esperado,
         "texto_origem": trecho,
-        "resposta_bruta_ia": resultado_ia["resposta_bruta"],
-        "motivo_termino": resultado_ia["motivo_termino"],
-        "questoes": questoes,
+        "resposta_bruta_ia": "\n---LOTE---\n".join(todas_respostas_brutas),
+        "motivo_termino": ",".join(motivos_termino),
+        "questoes": todas_questoes,
     }
