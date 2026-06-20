@@ -77,23 +77,25 @@ def localizar_secao_questoes(markdown: str) -> str | None:
 
 def contar_questoes_esperadas(trecho: str) -> int:
     """
-    Conta ocorrências do padrão 'número + ponto + parêntese de origem' para
-    ter uma estimativa independente da IA de quantas questões existem no trecho.
-    Não extrai conteúdo, só conta — serve como checagem de integridade.
+    Conta ocorrências do padrão 'número + ponto + parêntese contendo um ano
+    de 4 dígitos' para ter uma estimativa independente da IA de quantas
+    questões existem no trecho. Exigir o ano evita falsos positivos como
+    'Art. 25. (par. 1o)' no meio de comentários, que não são questões.
     """
-    padrao = re.compile(r"\b\d{1,3}\.\s*\(")
+    padrao = re.compile(r"\d{1,3}\.\s*\([^)]*(?:19|20)\d{2}[^)]*\)")
     return len(padrao.findall(trecho))
 
 
 def dividir_em_lotes(trecho: str, questoes_por_lote: int = 6) -> list[str]:
     """
     Divide o trecho da seção de questões em lotes menores, cortando nos
-    pontos onde uma nova questão começa (padrão 'número + ponto + parêntese').
+    pontos onde uma nova questão começa (mesmo padrão usado em
+    contar_questoes_esperadas, com ano de 4 dígitos exigido no parêntese
+    para não confundir com referências de lei tipo 'Art. 25. (par. 1o)').
     Isso evita que o modelo perca qualidade/aderência ao processar um trecho
-    muito longo de uma vez (problema observado: trecho grande -> IA pula
-    questões silenciosamente mesmo sem truncar tecnicamente).
+    muito longo de uma vez.
     """
-    padrao = re.compile(r"\b\d{1,3}\.\s*\(")
+    padrao = re.compile(r"\d{1,3}\.\s*\([^)]*(?:19|20)\d{2}[^)]*\)")
     posicoes_inicio = [m.start() for m in padrao.finditer(trecho)]
 
     if not posicoes_inicio:
