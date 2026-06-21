@@ -165,6 +165,7 @@ def processar_extracao(markdown: str) -> dict:
             "total_esperado": 0,
             "texto_origem": None,
             "resposta_bruta_ia": None,
+            "lotes_entrada_debug": None,
             "motivo_termino": None,
             "questoes": [],
         }
@@ -174,6 +175,7 @@ def processar_extracao(markdown: str) -> dict:
 
     todas_questoes = []
     todas_respostas_brutas = []
+    todos_lotes_entrada = []
     motivos_termino = []
     houve_erro_parsing = False
 
@@ -181,6 +183,7 @@ def processar_extracao(markdown: str) -> dict:
         resultado_ia = extrair_questoes_via_ia(lote)
         todas_questoes.extend(resultado_ia["questoes"])
         todas_respostas_brutas.append(resultado_ia["resposta_bruta"])
+        todos_lotes_entrada.append(lote)
         motivos_termino.append(resultado_ia["motivo_termino"])
         if resultado_ia["erro_parsing"]:
             houve_erro_parsing = True
@@ -207,6 +210,7 @@ def processar_extracao(markdown: str) -> dict:
         "total_esperado": total_esperado,
         "texto_origem": trecho,
         "resposta_bruta_ia": "\n---LOTE---\n".join(todas_respostas_brutas),
+        "lotes_entrada_debug": "\n---LOTE---\n".join(todos_lotes_entrada),
         "motivo_termino": ",".join(motivos_termino),
         "questoes": todas_questoes,
     }
