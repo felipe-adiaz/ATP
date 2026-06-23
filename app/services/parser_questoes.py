@@ -32,6 +32,12 @@ PADRAO_INICIO_MESMA_LINHA = re.compile(
 # Formato 2: número sozinho numa linha ("1."), cabeçalho na linha seguinte.
 PADRAO_NUMERO_SOZINHO = re.compile(r'^(?P<numero>\d{1,3})\.\s*$')
 
+# Cabeçalho na linha seguinte ao número (Formato 2). Aceita parênteses
+# ANINHADOS no cabeçalho, ex.: "(FGV/AF (SEFAZ PR)/SEFAZ PR/2025)".
+PADRAO_CABECALHO_LINHA_SEGUINTE = re.compile(
+    r'^\((?P<cabecalho>(?:[^()]|\([^()]*\))+)\)\s*(?P<resto>.*)$'
+)
+
 # Formato 3: "1. CEBRASPE/MPS/2025 Enunciado..." -- número + cabeçalho SEM
 # parênteses, seguido direto do enunciado na mesma linha. Cabeçalho aqui é
 # só BANCA/ÓRGÃO/ANO (sempre com barra, observado nos PDFs reais), e o
@@ -149,8 +155,9 @@ def detectar_inicio_questao(linha: str, linha_seguinte: str):
     m2 = PADRAO_NUMERO_SOZINHO.match(linha)
     if m2 and linha_seguinte is not None:
         linha_seg = linha_seguinte.strip()
-        # cabeçalho da linha seguinte deve estar entre parênteses
-        m3 = re.match(r'^\((?P<cabecalho>[^)]+)\)\s*(?P<resto>.*)$', linha_seg)
+        # cabeçalho da linha seguinte deve estar entre parênteses.
+        # Aceita parênteses ANINHADOS (ex.: "(FGV/AF (SEFAZ PR)/SEFAZ PR/2025)").
+        m3 = PADRAO_CABECALHO_LINHA_SEGUINTE.match(linha_seg)
         if m3:
             numero = int(m2.group("numero"))
             cabecalho = m3.group("cabecalho").strip()
