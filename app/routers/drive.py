@@ -5,26 +5,21 @@ from app.services.drive_auth_service import gerar_url_autorizacao, trocar_code_p
 from app.services.supabase_client_service import get_supabase_client_for_user, extrair_user_id
 from app.services.drive_service import listar_pdfs_da_pasta_studyflow, baixar_pdf
 from app.services.pdf_service import processar_pdf_bytes
+
 router = APIRouter()
+
+
 @router.get("/auth")
 async def iniciar_autorizacao(authorization: str = Header(...)):
-    """
-    Recebe o JWT do usuário logado (header Authorization: Bearer <token>)
-    e devolve a URL do Google para onde o frontend deve redirecionar o usuário.
-    O próprio JWT vira o 'state', para sabermos de quem é o callback depois.
-    """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente ou mal formatado.")
     user_jwt = authorization.replace("Bearer ", "", 1)
     url = gerar_url_autorizacao(state=user_jwt)
     return {"auth_url": url}
+
+
 @router.get("/callback")
 async def callback_google(code: str = Query(...), state: str = Query(...)):
-    """
-    O Google redireciona para cá depois que o usuário autoriza o acesso.
-    'state' contém o JWT que mandamos lá no /auth, então sabemos
-    para qual usuário salvar os tokens.
-    """
     user_jwt = state
     try:
         tokens = trocar_code_por_tokens(code)
@@ -47,14 +42,11 @@ async def callback_google(code: str = Query(...), state: str = Query(...)):
         "token_expiry": tokens["expiry"],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }, on_conflict="user_id").execute()
-    # Ajuste esta URL para a tela real do frontend que deve abrir após conectar
     return RedirectResponse(url="https://preview--auditprep.lovable.app/app/files?drive=conectado")
+
+
 @router.get("/listar-pasta")
 async def listar_pasta(authorization: str = Header(...)):
-    """
-    Lista todos os PDFs encontrados na pasta StudyFlow (e subpastas) do
-    Google Drive do usuário logado. Não baixa conteúdo, só metadados.
-    """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente ou mal formatado.")
     user_jwt = authorization.replace("Bearer ", "", 1)
@@ -77,8 +69,6 @@ async def listar_pasta(authorization: str = Header(...)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Erro ao listar arquivos no Drive: {str(e)}")
 
-    # Se o token foi renovado durante a chamada, salva o novo no banco
-    # para não precisar renovar de novo na próxima vez.
     novo_access_token = resultado.pop("access_token_atualizado", None)
     if novo_access_token and novo_access_token != access_token:
         client.table("drive_connections").update({
@@ -93,14 +83,10 @@ async def listar_pasta(authorization: str = Header(...)):
         )
 
     return resultado
+
+
 @router.post("/processar-pasta")
 async def processar_pasta(authorization: str = Header(...)):
-    """
-    Para cada PDF encontrado na pasta StudyFlow do Drive do usuário:
-    - Se já foi processado antes com o mesmo drive_modified_time, pula.
-    - Caso contrário, baixa o PDF, extrai markdown/destaques (pdf_service)
-      e salva (ou atualiza) o registro em pdf_processados.
-    """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token ausente ou mal formatado.")
     user_jwt = authorization.replace("Bearer ", "", 1)
@@ -137,8 +123,6 @@ async def processar_pasta(authorization: str = Header(...)):
             detail="Pasta 'StudyFlow' não encontrada na raiz do Google Drive do usuário.",
         )
 
-    # Busca quais drive_file_id já foram processados e com qual drive_modified_time,
-    # para decidir o que pular e o que (re)processar.
     ja_processados_resultado = client.table("pdf_processados").select(
         "drive_file_id, drive_modified_time"
     ).eq("user_id", user_id).eq("origem", "google_drive").execute()
@@ -169,6 +153,7 @@ async def processar_pasta(authorization: str = Header(...)):
                 "user_id": user_id,
                 "arquivo": pdf_info["nome_arquivo"],
                 "markdown": resultado_extracao["markdown"],
+                "texto_questoes": resultado_extracao["texto_questoes"],
                 "total_paginas": resultado_extracao["total_paginas"],
                 "paginas_conteudo": resultado_extracao["paginas_conteudo"],
                 "paginas_questoes": resultado_extracao["paginas_questoes"],
