@@ -3,6 +3,11 @@ import hashlib
 import re
 from app.services.localizar_secoes_v2 import localizar_secoes_questoes_em_texto
 from app.services.parser_questoes import parsear_questoes_do_bloco
+from app.services.limpeza import (
+    limpar_marca_dagua,
+    detectar_linhas_repetidas,
+    remover_linhas_repetidas,
+)
 
 
 def calcular_hash(texto: str) -> str:
@@ -16,10 +21,36 @@ _PADRAO_ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 
 _PADRAO_INICIO = re.compile(r"\d{1,3}\.\s*\([^)]*(?:19|20)\d{2}[^)]*\)")
 
+# Marcador de página inserido pelo pdf_service ("----- PAGINA 53 -----").
+# Usado para separar o texto em páginas e detectar linhas repetidas
+# (rodapé: nome do professor, "Aula NN", título do curso etc.).
+_PADRAO_MARCADOR_PAGINA = re.compile(r"-----\s*PAGINA\s+\d+\s*-----")
+
+
+def _limpar_texto_questoes(texto: str) -> str:
+    """
+    Limpeza aplicada ao texto cru ANTES de localizar/parsear:
+      1. remove caracteres de largura zero (zero-width / BOM);
+      2. remove marca d'água por usuário (linha CPF+nome) e a URL do Estrategia;
+      3. remove linhas que se repetem em >= 60% das paginas (nome de professor,
+         "Aula NN", titulo do curso etc.), comparando o documento consigo mesmo.
+
+    Os marcadores "----- PAGINA N -----" e os cabecalhos "QUESTOES COMENTADAS"
+    sao preservados (cada um e unico / aparece em poucas paginas, abaixo do
+    limiar), entao a etapa de localizacao continua funcionando.
+    """
+    texto = _PADRAO_ZERO_WIDTH.sub("", texto or "")
+    texto = limpar_marca_dagua(texto)
+    paginas = _PADRAO_MARCADOR_PAGINA.split(texto)
+    repetidas = detectar_linhas_repetidas(paginas)
+    texto = remover_linhas_repetidas(texto, repetidas)
+    return texto
+
 
 def processar_extracao(texto_questoes: str) -> dict:
-    # Limpa caracteres de largura zero ANTES de hashear, localizar e parsear.
-    texto_questoes = _PADRAO_ZERO_WIDTH.sub("", texto_questoes or "")
+    # Limpa o texto cru (zero-width, marca d'agua, rodapes repetidos) antes
+    # de hashear, localizar e parsear.
+    texto_questoes = _limpar_texto_questoes(texto_questoes)
 
     h = calcular_hash(texto_questoes or "")
     base = {"conteudo_hash": h, "resposta_bruta_ia": None, "lotes_entrada_debug": None}
