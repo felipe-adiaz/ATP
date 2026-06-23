@@ -149,6 +149,11 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
     - nivel_dominio: % de palavras destacadas APENAS nas páginas de conteúdo
     - texto_questoes: texto bruto das páginas de questões, paginado com
       marcadores '----- PAGINA N -----', pronto para o parser determinístico
+
+    Regra de seção: nos PDFs do Estratégia, a seção de QUESTÕES COMENTADAS /
+    LISTA DE QUESTÕES / GABARITO fica no FIM da aula e não volta mais para
+    conteúdo. Por isso, uma vez detectada essa seção, todas as páginas
+    seguintes são tratadas como questões (não há retorno para conteúdo).
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -172,12 +177,11 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
             if contar_sobreposicoes((w[0]+w[2])/2, (w[1]+w[3])/2, highlight_rects) > 0
         )
 
-        if num >= 6:
-            if eh_secao_questoes(texto_pagina):
-                em_secao_questoes = True
-            else:
-                if palavras_pagina > 20:
-                    em_secao_questoes = False
+        # A partir da página 7, ao detectar o início da seção de questões,
+        # entra na seção e NÃO volta mais para conteúdo (a seção de questões/
+        # lista/gabarito vai até o fim da aula).
+        if num >= 6 and not em_secao_questoes and eh_secao_questoes(texto_pagina):
+            em_secao_questoes = True
 
         entrada = {
             "numero": num + 1,
@@ -188,8 +192,9 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
         }
 
         if em_secao_questoes:
-            if texto_md.strip():
-                # Guarda o texto bruto para o parser determinístico
+            # Guarda o texto bruto para o parser determinístico, mesmo que a
+            # página não tenha texto "markdown" (ex.: páginas só de gabarito).
+            if texto_pagina.strip():
                 entrada["texto_raw"] = texto_pagina
                 paginas_questoes.append(entrada)
         else:
