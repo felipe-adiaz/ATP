@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Limpeza de rodapé / marca d'água para o texto de questões.
-
 Reaproveita a mesma lógica do serviço de highlights (descrita no briefing):
 - remove a marca d'água "CPF + nome" e a URL do Estratégia;
 - detecta e remove linhas que se repetem na maioria das páginas
   (nome de professores, "Aula NN", título do curso etc.), comparando o
   próprio documento consigo mesmo, sem lista fixa.
-
 No fluxo final, a limpeza pesada acontece na FUNÇÃO DE IMPORTAÇÃO. Este
 módulo está aqui para o serviço de questões também conseguir limpar os
 campos (enunciado/comentário) antes de gravar, já que ele lê o texto cru
@@ -20,9 +18,15 @@ from collections import Counter
 PADRAO_MARCA_CPF_NOME = re.compile(r'^\s*\d{11}\s*-\s*\S.*$')
 PADRAO_URL_ESTRATEGIA = re.compile(r'www\.estrategiaconcursos\.com\.br', re.IGNORECASE)
 
+# Caracteres invisíveis de largura zero que quebram o parser.
+PADRAO_ZERO_WIDTH = re.compile(r'[\u200b\u200c\u200d\ufeff]')
+
 
 def limpar_marca_dagua(texto: str) -> str:
-    """Remove linhas de marca d'água (CPF+nome) e a URL do Estratégia."""
+    """Remove caracteres invisíveis, linhas de marca d'água (CPF+nome) e a URL do Estratégia."""
+    # Remove zero-width space/non-joiner/joiner e BOM antes de qualquer outra coisa.
+    texto = PADRAO_ZERO_WIDTH.sub('', texto)
+
     saida = []
     for linha in texto.split("\n"):
         if PADRAO_MARCA_CPF_NOME.match(linha):
