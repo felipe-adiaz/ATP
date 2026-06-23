@@ -26,7 +26,7 @@ import re
 # Formato 1: "1. (CESPE – LOREM ÓRGÃO – ANALISTA – 2018)" tudo na mesma linha.
 # Exige PONTO após o número (diferencia de nota de rodapé "1 (Autor, 2010)").
 PADRAO_INICIO_MESMA_LINHA = re.compile(
-    r'^(?P<numero>\d{1,3})\.\s*\((?P<cabecalho>[^)]+)\)'
+    r'^(?P<numero>\d{1,3})\.\s*\((?P<cabecalho>(?:[^()]|\([^()]*\))+)\)'
 )
 
 # Formato 2: número sozinho numa linha ("1."), cabeçalho na linha seguinte.
@@ -48,7 +48,7 @@ PADRAO_INICIO_SEM_PARENTESE = re.compile(
 # (barra, com ou sem espaços ao redor). Texto extra após o ano é tolerado,
 # separado por espaço OU barra (ex: "2013/Adaptada", "2006 Adaptada").
 PADRAO_CABECALHO_VALIDO = re.compile(
-    r'^[^–\-/]+[–\-/].+(19|20)\d{2}\s*[/\s]?\s*\w*\s*$'
+    r'^[^–\-/]+[–\-/].+(19|20)\d{2}\s*[/\s]?\s*[\w()]*\s*$'
 )
 
 # Marcador de comentário: "Comentários" com ou sem dois-pontos, linha própria.
