@@ -200,3 +200,26 @@ def localizar_secoes_questoes(doc):
     ocorrencias = localizar_ocorrencias(linhas, paginas)
     blocos = montar_blocos(ocorrencias, linhas)
     return blocos, ocorrencias
+
+
+# ---------------------------------------------------------------------------
+# Porta de entrada por texto paginado (sem PyMuPDF)
+# ---------------------------------------------------------------------------
+
+PADRAO_MARCADOR_PAGINA = re.compile(r'^-{5}\s*PAGINA\s+(\d+)\s*-{5}\s*$')
+
+
+def localizar_secoes_questoes_em_texto(texto_paginado):
+    """Igual a localizar_secoes_questoes, mas a partir de um texto com
+    marcadores '----- PAGINA N -----' em vez de um doc do PyMuPDF."""
+    linhas, paginas_por_linha, pagina_atual = [], [], 1
+    for linha in (texto_paginado or "").split("\n"):
+        m = PADRAO_MARCADOR_PAGINA.match(linha.strip())
+        if m:
+            pagina_atual = int(m.group(1))
+            continue
+        linhas.append(linha)
+        paginas_por_linha.append(pagina_atual)
+    ocorrencias = localizar_ocorrencias(linhas, paginas_por_linha)
+    blocos = montar_blocos(ocorrencias, linhas)
+    return blocos, ocorrencias
