@@ -14,23 +14,13 @@ PADROES_SECAO_QUESTOES = [
     r"^EXERC",
 ]
 
-# Padrões de marca d'água a remover do texto extraído. Genéricos: não dependem
-# de um aluno específico, funcionam para qualquer nome/CPF que apareça no
-# mesmo formato adotado pela plataforma de origem do PDF (ex: Estratégia
-# Concursos costuma marcar cada página com "CPF - Nome Completo").
 PADROES_MARCA_DAGUA = [
-    r"\d{11}\s*-\s*[A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú ]*",  # ex: "01000099130 - Luis Felipe Alves Diaz" (não cruza quebra de linha)
+    r"\d{11}\s*-\s*[A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú ]*",
     r"www\.estrategiaconcursos\.com\.br",
 ]
 
 
 def limpar_marca_dagua(texto: str) -> str:
-    """
-    Remove marcas d'água de identificação pessoal (CPF + nome) e do domínio
-    da plataforma de origem, que aparecem repetidas em cada página do PDF.
-    Funciona para qualquer aluno, pois o CPF/nome não são fixos no código,
-    apenas o formato do padrão é reconhecido.
-    """
     for padrao in PADROES_MARCA_DAGUA:
         texto = re.sub(padrao, "", texto)
     texto = re.sub(r'\n{3,}', '\n\n', texto)
@@ -39,15 +29,6 @@ def limpar_marca_dagua(texto: str) -> str:
 
 
 def detectar_linhas_repetidas(textos_por_pagina: list, limiar: float = 0.6, tamanho_minimo: int = 5) -> set:
-    """
-    Detecta linhas (ex: nome do professor, título da aula) que se repetem
-    como cabeçalho/rodapé em uma fração alta das páginas. Genérico: não
-    depende de um título ou autor fixo, funciona para qualquer PDF/aula,
-    pois descobre o que se repete observando o próprio documento.
-
-    `tamanho_minimo` evita remover linhas curtas (ex: "Art. 25.") que
-    poderiam coincidir entre páginas sem serem cabeçalho/rodapé de verdade.
-    """
     from collections import Counter
 
     contagem = Counter()
@@ -64,7 +45,6 @@ def detectar_linhas_repetidas(textos_por_pagina: list, limiar: float = 0.6, tama
 
 
 def remover_linhas_repetidas(texto: str, linhas_repetidas: set) -> str:
-    """Remove do texto de uma página as linhas identificadas como cabeçalho/rodapé repetido."""
     linhas_filtradas = [l for l in texto.split("\n") if l.strip() not in linhas_repetidas]
     resultado = "\n".join(linhas_filtradas)
     resultado = re.sub(r'\n{3,}', '\n\n', resultado)
@@ -72,12 +52,7 @@ def remover_linhas_repetidas(texto: str, linhas_repetidas: set) -> str:
 
 
 def eh_secao_questoes(texto_pagina: str) -> bool:
-    """
-    Verifica se a página é uma seção de questões/gabarito.
-    Compara com as primeiras linhas não-vazias da página.
-    """
     linhas = [l.strip() for l in texto_pagina.split('\n') if l.strip()]
-    # Verifica nas primeiras 3 linhas não-vazias
     for linha in linhas[:3]:
         linha_upper = linha.upper()
         for padrao in PADROES_SECAO_QUESTOES:
@@ -172,15 +147,8 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
     Processa um PDF em memória (bytes) e retorna:
     - markdown: texto das páginas de conteúdo com marcações
     - nivel_dominio: % de palavras destacadas APENAS nas páginas de conteúdo
-    
-    Identifica automaticamente seções de questões (QUESTÕES COMENTADAS,
-    LISTA DE QUESTÕES, GABARITO) e as exclui do cálculo de domínio,
-    mesmo que o PDF alterne entre conteúdo e questões várias vezes.
-    Ignora as primeiras 6 páginas na detecção (índice/capa).
-
-    Marca d'água de identificação pessoal (CPF + nome do aluno) e do
-    domínio da plataforma de origem são removidas automaticamente,
-    funcionando para qualquer aluno (não há nome/CPF fixo no código).
+    - texto_questoes: texto bruto das páginas de questões, paginado com
+      marcadores '----- PAGINA N -----', pronto para o parser determinístico
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -204,13 +172,10 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
             if contar_sobreposicoes((w[0]+w[2])/2, (w[1]+w[3])/2, highlight_rects) > 0
         )
 
-        # A partir da página 7, detectar transições de seção
         if num >= 6:
             if eh_secao_questoes(texto_pagina):
                 em_secao_questoes = True
             else:
-                # Voltou para conteúdo se a página tem texto substancial
-                # e não é só gabarito/número de questão
                 if palavras_pagina > 20:
                     em_secao_questoes = False
 
@@ -224,6 +189,8 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
 
         if em_secao_questoes:
             if texto_md.strip():
+                # Guarda o texto bruto para o parser determinístico
+                entrada["texto_raw"] = texto_pagina
                 paginas_questoes.append(entrada)
         else:
             total_palavras_conteudo += palavras_pagina
@@ -231,24 +198,22 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
             if texto_md.strip():
                 paginas_conteudo.append(entrada)
 
-    # Remove cabeçalho/rodapé repetido (ex: nome do professor, título da
-    # aula) que aparece em quase toda página. Só é possível detectar isso
-    # agora que todas as páginas já foram extraídas e podem ser comparadas
-    # entre si. Não afeta as contagens de palavras/destacadas (calculadas
-    # à parte, direto do PDF), só o texto exibido no markdown.
     linhas_repetidas = detectar_linhas_repetidas([p["texto"] for p in paginas_conteudo])
     for p in paginas_conteudo:
         p["texto"] = remover_linhas_repetidas(p["texto"], linhas_repetidas)
 
-    # Nível de domínio calculado SOMENTE sobre páginas de conteúdo
     nivel_dominio = round(
         (total_destacadas_conteudo / total_palavras_conteudo * 100), 1
     ) if total_palavras_conteudo > 0 else 0.0
 
-    # Markdown só das páginas de conteúdo
     markdown = f"# {nome_arquivo}\n\n"
     for p in paginas_conteudo:
         markdown += f"\n\n---\n## Página {p['numero']}\n\n{p['texto']}"
+
+    # Monta texto_questoes com marcadores de página para o parser determinístico
+    texto_questoes = ""
+    for p in paginas_questoes:
+        texto_questoes += f"\n----- PAGINA {p['numero']} -----\n{p.get('texto_raw', '')}"
 
     return {
         "markdown": markdown,
@@ -259,17 +224,11 @@ def processar_pdf_bytes(pdf_bytes: bytes, nome_arquivo: str) -> dict:
         "total_destacadas_conteudo": total_destacadas_conteudo,
         "nivel_dominio": nivel_dominio,
         "paginas": paginas_conteudo,
+        "texto_questoes": texto_questoes,
     }
 
 
 def calcular_status_materia(nivel_dominio: float, tem_pdf: bool) -> str:
-    """
-    Determina o status de uma matéria com base no nível de domínio.
-    - sem_pdf: aluno ainda não subiu material
-    - consumo: tem PDF mas ainda estudando (< 30% destacado)
-    - revisao_parcial: em progresso (30-70%)
-    - revisao: domínio consolidado (> 70%)
-    """
     if not tem_pdf:
         return "sem_pdf"
     if nivel_dominio < 30:
