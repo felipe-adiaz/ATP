@@ -470,7 +470,8 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
             "id_unico_questao": gerar_id_unico(nome_arquivo, inicio_linha_bloco, numero),
             "revisar": revisar,
             "motivo_revisao": motivos,
-            "_fase": "enunciado",  # enunciado -> comentario -> fechada
+            "_fase": "enunciado",  # enunciado -> alternativas -> comentario -> fechada
+            "_alt_atual": None,    # letra da alternativa em construção (multi-linha)
         }
 
     def fechar_questao(q):
@@ -490,7 +491,7 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
             q["motivo_revisao"].append("tipo_gabarito_nao_reconhecido")
 
         q["motivo_revisao"] = "; ".join(q["motivo_revisao"]) if q["motivo_revisao"] else None
-        for chave in ("enunciado_linhas", "alternativas", "comentario_linhas", "_fase"):
+        for chave in ("enunciado_linhas", "alternativas", "comentario_linhas", "_fase", "_alt_atual"):
             q.pop(chave, None)
         return q
 
@@ -525,8 +526,13 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
         if questao_atual["_fase"] == "enunciado":
             alt = linha_eh_alternativa(linha)
             if alt is not None:
+                # primeira alternativa: encerra o enunciado e entra na fase
+                # de alternativas (a partir daqui, linhas sem letra são
+                # continuação da alternativa atual, não enunciado).
                 letra, texto_alt = alt
                 questao_atual["alternativas"][letra] = texto_alt.strip()
+                questao_atual["_alt_atual"] = letra
+                questao_atual["_fase"] = "alternativas"
                 i += 1
                 continue
             if detectar_marcador_comentario(linha):
@@ -534,6 +540,34 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
                 i += 1
                 continue
             questao_atual["enunciado_linhas"].append(linha)
+            i += 1
+            continue
+
+        if questao_atual["_fase"] == "alternativas":
+            if detectar_marcador_comentario(linha):
+                questao_atual["_fase"] = "comentario"
+                i += 1
+                continue
+            alt = linha_eh_alternativa(linha)
+            if alt is not None:
+                # nova alternativa (b, c, ...): passa a ser a alternativa atual.
+                letra, texto_alt = alt
+                questao_atual["alternativas"][letra] = texto_alt.strip()
+                questao_atual["_alt_atual"] = letra
+                i += 1
+                continue
+            # Linha sem letra dentro da fase de alternativas = continuação
+            # da alternativa atual (alternativa quebrada em várias linhas).
+            # Ignora linhas vazias e números de página soltos (ex: "53").
+            linha_strip = linha.strip()
+            if linha_strip and not re.match(r'^\d{1,4}$', linha_strip):
+                letra_atual = questao_atual["_alt_atual"]
+                if letra_atual is not None:
+                    atual = questao_atual["alternativas"].get(letra_atual, "")
+                    questao_atual["alternativas"][letra_atual] = (atual + " " + linha_strip).strip()
+                else:
+                    # sem alternativa atual (não deveria ocorrer): preserva no enunciado
+                    questao_atual["enunciado_linhas"].append(linha)
             i += 1
             continue
 
