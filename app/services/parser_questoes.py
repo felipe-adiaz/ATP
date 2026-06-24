@@ -475,10 +475,18 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
         }
 
     def fechar_questao(q):
-        q["enunciado"] = "\n".join(q["enunciado_linhas"]).strip()
+        # BUG-3: as quebras de linha dentro do enunciado são quebras visuais do
+        # PDF (não de parágrafo). Junta tudo num parágrafo só, colapsando
+        # qualquer sequência de espaços/quebras em um único espaço.
+        q["enunciado"] = re.sub(r"\s+", " ", " ".join(q["enunciado_linhas"])).strip()
+        # Comentário preserva estrutura de parágrafos (ainda não exibido; F2).
         q["comentario"] = "\n".join(q["comentario_linhas"]).strip() if q["comentario_linhas"] else None
         for letra in "ABCDE":
-            q[f"alternativa_{letra.lower()}"] = q["alternativas"].get(letra)
+            alt = q["alternativas"].get(letra)
+            if alt is not None:
+                # Normaliza espaços/quebras internas da alternativa multi-linha.
+                alt = re.sub(r"\s+", " ", alt).strip()
+            q[f"alternativa_{letra.lower()}"] = alt
 
         # Questão sem gabarito identificado: sinaliza para revisão, não descarta.
         if q["gabarito"] is None:
@@ -537,6 +545,12 @@ def parsear_questoes_do_bloco(texto_bloco: str, nome_arquivo: str, inicio_linha_
                 continue
             if detectar_marcador_comentario(linha):
                 questao_atual["_fase"] = "comentario"
+                i += 1
+                continue
+            # BUG-2: descarta linha que é só um número curto (número de página
+            # solto que sobrou no meio do enunciado) e linhas vazias.
+            linha_strip = linha.strip()
+            if not linha_strip or re.match(r"^\d{1,4}$", linha_strip):
                 i += 1
                 continue
             questao_atual["enunciado_linhas"].append(linha)
