@@ -26,6 +26,10 @@ _PADRAO_INICIO = re.compile(r"\d{1,3}\.\s*\([^)]*(?:19|20)\d{2}[^)]*\)")
 # (rodapé: nome do professor, "Aula NN", título do curso etc.).
 _PADRAO_MARCADOR_PAGINA = re.compile(r"-----\s*PAGINA\s+\d+\s*-----")
 
+# Marcador de highlight deixado pelo serviço de marcação do PDF de origem,
+# no formato "==<token>==" (ex.: "==487b0c=="). Não é conteúdo da questão.
+_PADRAO_MARCADOR_HIGHLIGHT = re.compile(r"==[0-9a-zA-Z]+==")
+
 
 def _limpar_texto_questoes(texto: str) -> str:
     """
@@ -40,6 +44,7 @@ def _limpar_texto_questoes(texto: str) -> str:
     limiar), entao a etapa de localizacao continua funcionando.
     """
     texto = _PADRAO_ZERO_WIDTH.sub("", texto or "")
+    texto = _PADRAO_MARCADOR_HIGHLIGHT.sub("", texto)
     texto = limpar_marca_dagua(texto)
     paginas = _PADRAO_MARCADOR_PAGINA.split(texto)
     repetidas = detectar_linhas_repetidas(paginas)
